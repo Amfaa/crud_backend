@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+    
+    environment {
+        registry = 'amfaa/crud-backend'   //                                       dockerHubAccountName/dockerImageName
+        registryCredential = 'dockerhub'
+        imagename = "amfaa/crud-backend"
+        dockerImage = ''
+    }
+
+
+    stages {
+        stage('Git Cloning') {
+            steps {
+                checkout([$class: 'GitSCM', branches: [[name: '*/master']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/Amfaa/crud_backend.git']]])
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script{
+                	  dockerImage = docker.build registry + ":BUILD_NUMBER"
+                	   //dockerImage = docker.build imagename
+		        }
+            }
+            
+        }
+        
+        stage('Push To DockerHub') {
+            steps {
+                script{
+                	  withDockerRegistry(credentialsId: 'dockerhub') {
+                	  dockerImage.push()
+                	  }
+                	  
+		        }
+            }
+            
+        }
+        
+        stage('Clean up activity at jenkins-salve'){
+            steps{
+                sh 'docker system prune --all'
+            }
+        }
+        
+        
+        
+        stage ('Removing unused images and container @ Host'){
+            agent {
+                label 'Host-slave'
+            }
+            steps{
+                sh 'docker system prune --all'
+                sh """
+                    docker ps -a \
+                    | awk '{ print \$1,\$2 }' \
+                    | grep amfaa/crud-backend \
+                    | awk '{print \$1 }' \
+                    | xargs -I {} docker rm -f {}
+                    """
+            }
+        }
+        
+        
+        stage('DEPLOY TO DOCKER HOST') {
+             agent {
+                 label 'Host-slave'
+             }
+            steps {
+                
+                script{
+                	  withDockerRegistry(credentialsId: 'dockerhub') {
+                	  dockerImage.pull()
+                	  sh 'docker run -d --expose=5001 -p=5001:5001 "${imagename}:BUILD_NUMBER"'
+                	  }
+                }
+            }
+            
+        }
+        
+    }
+}
